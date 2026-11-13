@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тихая ночь — калькулятор сна</title>
+<style>
+  :root { color-scheme: dark; font: 16px/1.5 "Segoe UI", sans-serif; background: #101222; color: #f7f3ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at top right,#332956,transparent 55%); }
+  main { width: min(100% - 36px, 640px); margin: auto; padding: 56px 0; }
+  .moon { width: 50px; height: 50px; border-radius: 50%; box-shadow: inset -15px -10px #cfbaff; margin-bottom: 24px; }
+  h1 { font-size: clamp(38px,9vw,64px); line-height: 1; letter-spacing: -.055em; margin: 0; }
+  p, small { color: #c7bfd9; }
+  form, article { background: #1c1d32; border: 1px solid #3a3755; border-radius: 22px; padding: 22px; }
+  .fields, .results { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+  label { display: grid; gap: 7px; }
+  input, button { width: 100%; min-height: 48px; border-radius: 12px; border: 1px solid #55506f; padding: 8px 12px; font: inherit; color: inherit; background: #121426; }
+  button { cursor: pointer; }
+  button:disabled { opacity: .65; cursor: default; }
+  :focus-visible { outline: 2px solid #ebd8ff; outline-offset: 3px; }
+  .actions { margin-top: 14px; }
+  button[type=submit] { background: #d5c1ff; color: #19112e; font-weight: 700; border: 0; }
+  #status { margin: 12px 0 0; min-height: 24px; font-size: .9rem; }
+  h2 { font-size: 1.3rem; margin: 25px 0 12px; }
+  article:first-child { background: #31264a; border-color: #736093; }
+  article strong { display: block; font-size: 2.15rem; font-variant-numeric: tabular-nums; }
+  article span { display: block; }
+  @media (max-width: 440px) { main { padding-top: 30px; } .fields { grid-template-columns: 1fr; } article { padding: 14px; } }
+</style>
+<main>
+  <div class="moon" aria-hidden="true"></div>
+  <h1>Тихая ночь</h1>
+  <p>Скажи, во сколько тебе нужно встать, и посмотри, когда пора лечь.</p>
+  <form>
+    <div class="fields">
+      <label>Время подъёма <input id="wake" type="time" value="07:00" required></label>
+      <label>Минут на засыпание <input id="delay" type="number" min="0" max="120" value="15" required></label>
+    </div>
+    <div class="fields actions">
+      <button id="voice" type="button">Сказать время</button>
+      <button type="submit">Рассчитать</button>
+    </div>
+    <p id="status" role="status">Например, «в семь тридцать утра».</p>
+  </form>
+  <section aria-live="polite">
+    <h2 id="heading"></h2>
+    <div id="results" class="results"></div>
+  </section>
+  <p><small>Варианты рассчитаны по длительности сна. Время засыпания можно изменить.</small></p>
+</main>
+<script>
+  const form = document.querySelector('form');
+  const wake = document.querySelector('#wake');
+  const delay = document.querySelector('#delay');
+  const status = document.querySelector('#status');
+  const voice = document.querySelector('#voice');
+  const heading = document.querySelector('#heading');
+  const results = document.querySelector('#results');
+  const format = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+  function calculate(now = new Date()) {
+    const [hours, minutes] = wake.value.split(':').map(Number);
+    const target = new Date(now);
+    target.setHours(hours, minutes, 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    const tomorrow = target.getDate() !== now.getDate();
+    heading.textContent = `Подъём ${tomorrow ? 'завтра' : 'сегодня'} в ${format.format(target)}`;
+    results.replaceChildren();
+    for (const duration of [8, 9, 7.5, 7]) {
+      const bed = new Date(target.getTime() - (duration * 60 + delay.valueAsNumber) * 60000);
+      const card = document.createElement('article');
+      const day = bed.toDateString() === target.toDateString() && tomorrow ? 'завтра'
+        : bed.toDateString() === now.toDateString() ? 'сегодня' : 'накануне';
+      card.innerHTML = `<small>Лечь ${day}</small><strong>${format.format(bed)}</strong>
+        <span>${duration === 7.5 ? '7 ч 30 мин' : duration + ' ч'} сна</span>
+        ${bed < now ? '<small>Это время уже прошло</small>' : ''}`;
+      results.append(card);
+    }
+    const available = Math.floor((target - now) / 60000) - delay.valueAsNumber;
+    if (available > 0 && available < 420) {
+      const card = document.createElement('article');
+      card.innerHTML = `<small>Если лечь сейчас</small><strong>${Math.floor(available / 60)} ч ${available % 60} мин</strong><span>до подъёма с учётом засыпания</span>`;
+      results.prepend(card);
+    }
+  }
+
+  function parseTime(speech) {
+    const units = 'ноль один два три четыре пять шесть семь восемь девять десять одиннадцать двенадцать тринадцать четырнадцать пятнадцать шестнадцать семнадцать восемнадцать девятнадцать'.split(' ');
+    const values = Object.fromEntries(units.map((word, value) => [word, value]));
+    Object.assign(values, { час: 1, двадцать: 20, тридцать: 30, сорок: 40, пятьдесят: 50 });
+    const phrase = speech.toLowerCase().replace(/ё/g, 'е');
+    const tokens = (phrase.match(/[а-я]+|\d+/g) || [])
+      .filter(word => /^\d+$/.test(word) || Object.hasOwn(values, word))
+      .map(word => values[word] ?? Number(word));
+    if (!tokens.length) return '';
+    const hour = tokens.shift();
+    let hours = hour;
+    if (hour === 20 && tokens[0] >= 1 && tokens[0] <= 3 && !/\d\s*[:.]\s*\d/.test(phrase)) hours += tokens.shift();
+    const minutes = tokens.reduce((sum, value) => sum + value, 0);
+    if (/вечера|дня/.test(phrase) && hours < 12) hours += 12;
+    if (/утра|ночи/.test(phrase) && hours === 12) hours = 0;
+    if (hours > 23 || minutes > 59 || tokens.length > 2) return '';
+    return [hours, minutes].map(value => String(value).padStart(2, '0')).join(':');
+  }
+
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    calculate();
+  });
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  voice.addEventListener('click', () => {
+    if (!Recognition) {
+      status.textContent = 'В этом браузере голосовой ввод недоступен. Введи время вручную.';
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = 'ru-RU';
+    recognition.onresult = event => {
+      const time = parseTime(event.results[0][0].transcript);
+      if (!time) {
+        status.textContent = 'Не удалось разобрать время. Скажи, например, «семь тридцать».';
+        return;
+      }
+      wake.value = time;
+      status.textContent = `Распознано ${time}.`;
+      form.requestSubmit();
+    };
+    recognition.onerror = () => {
+      status.textContent = 'Голосовой ввод не сработал. Проверь доступ к микрофону или введи время вручную.';
+    };
+    recognition.onend = () => { voice.disabled = false; };
+    try {
+      recognition.start();
+      voice.disabled = true;
+      status.textContent = 'Слушаю…';
+    } catch {
+      status.textContent = 'Не удалось включить микрофон. Введи время вручную.';
+    }
+  });
+  calculate();
+</script>
+</html>
